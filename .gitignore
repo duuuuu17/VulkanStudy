@@ -1,0 +1,27 @@
+# 忽略编译生成的可执行文件和对象文件
+*.exe
+*.obj
+*.dll
+*.pdb
+*.ilk
+*.lib
+# 忽略.sln文件
+*.sln
+# 忽略.vcxproj文件
+*.vcxproj
+# 忽略Visual Studio生成的用户特定文件
+*.user
+*.filters
+
+# 忽略Visual Studio的工作空间文件夹
+.vs/
+# 忽略Debug和Release目录，这两个目录通常存放编译后的二进制文件
+Debug/
+Release/
+lib/
+OpenGL/
+VulkanStudy/
+x64/
+# 排除目录，需要被上传至github
+!include/
+!src/

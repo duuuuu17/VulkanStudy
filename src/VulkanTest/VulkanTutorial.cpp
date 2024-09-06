@@ -92,6 +92,15 @@ private:
 	VkQueue graphicsQueue; // 队列与逻辑设备一起自动创建，我们需要使用成员获取
 	VkQueue presentQueue; // 展示层所需队列
 	// 展示层所需参数:
+	struct SwapChainSupportDetails {
+		VkSurfaceCapabilitiesKHR capabilities; // 交换链的基本表面功能
+		std::vector<VkSurfaceFormatKHR> formats; // 交换链的表面格式功能
+		std::vector<VkPresentModeKHR> presentModes; // 交换链的展现模式
+		bool isFormatsAndPresentModesEmpty() const
+		{
+			return formats.empty() && presentModes.empty();
+		}
+	};
 	VkSurfaceKHR surface; // 窗口表面创建
 	VkSwapchainKHR swapchain; // 交换链对象
 	std::vector<VkImage> swapChainImages; // 交换链图像
@@ -221,6 +230,53 @@ private:
 		createImageView();
 		createFramebuffers();
 	}
+
+	// 检查当前系统的Vulkan是否支持验证层
+	bool checkValidationLayerSupport()
+	{	// 遍历获取实例层的所有属性
+		uint32_t layerCount = 0;
+		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
+		std::vector<VkLayerProperties> avaliableLayers(layerCount);
+		vkEnumerateInstanceLayerProperties(&layerCount, avaliableLayers.data());
+		//std::cout << "avaliable layer:\n";
+		//for (const auto& layer : avaliableLayers)
+		//{
+		//	std::cout << "\t" << layer.layerName << "\n";
+		//}
+		// 检查是否可用的实例层属性中是否包含了验证层
+		for (const char* layerName : validationLayers)
+		{
+			bool layerFound = false;
+			for (const auto& layerProperties : avaliableLayers)
+			{
+				if (strcmp(layerName, layerProperties.layerName) == 0)
+				{
+					layerFound = true;
+					break;
+				}
+			}
+			if (!layerFound)
+				return false;
+		}
+
+		return true;
+	}
+	// 从GLFW库中获取Vulkan扩展个数和扩展列表,并根据是否启用验证层，可以在运行时接收调试信息。
+	std::vector<const char*> getRequiredExtensions() {
+		uint32_t glfwExtensionCount = 0;
+		const char** glfwExtensions;
+		// 使用glfwGetRequiredInstanceExtensions函数获取扩展的列表和数量
+		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
+		// 构造函数（第一个参数地址，最后一个参数地址）
+		std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
+		// 当启用验证层时，需要指明启用验证层调试扩展
+		if (enableValidationLayers)
+		{
+			extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+		}
+		return extensions;
+	}
+
 	void createInstance() {
 
 		// 验证层启用并检查是否支持验证层
@@ -269,20 +325,6 @@ private:
 
 	}
 
-	// 检侧选择使用合适的物理设备
-	bool isDeviceSuitable(VkPhysicalDevice physicalDevice)
-	{
-		QueueFamilyIndices indices = findQueueFimalies(physicalDevice);
-		bool deviceExtensionsSupported = checkDeviceExtensionSupport(physicalDevice);
-		bool deviceSwapChainAdequate = false;
-		if (deviceExtensionsSupported)
-		{
-			SwapChainSupportDetails details = querySwapchainSupport(physicalDevice);
-			deviceSwapChainAdequate = details.isFormatsAndPresentModesEmpty();
-
-		}
-		return indices.isComplete() && deviceExtensionsSupported && (!deviceSwapChainAdequate);
-	}
 	QueueFamilyIndices findQueueFimalies(VkPhysicalDevice physicalDevice)
 	{
 		// 查找图形队列的数量和存储所有队列的属性对象
@@ -290,7 +332,7 @@ private:
 		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
 		std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
 		vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
-		
+
 		QueueFamilyIndices indices = {}; // 图形队列和展示队列索引
 		int i = 0;
 		VkBool32 presentSupport = false;
@@ -310,24 +352,65 @@ private:
 		}
 		return indices;
 	}
-
-	// 使用赋分制计算，来决定使用哪个物理设备
-	int rateDeviceSuitiability(VkPhysicalDevice physicalDeivce)
+	// 获取物理设备支持的功能，并检查指定的扩展功能是否支持。
+	bool checkDeviceExtensionSupport(VkPhysicalDevice physicalDevice)
 	{
-		VkPhysicalDeviceProperties deviceProperties;
-		vkGetPhysicalDeviceProperties(physicalDeivce, &deviceProperties);
-		VkPhysicalDeviceFeatures deviceFeatures;
-		vkGetPhysicalDeviceFeatures(physicalDeivce, &deviceFeatures);
-		int score = 0;
-		// 检测该物理设备是否位独立显卡
-		if (deviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU)
-			score += 1000;
-		// 纹理图像的最大数量直接影响图片质量
-		score += deviceProperties.limits.maxImageDimension2D;
-		if (!deviceFeatures.geometryShader) // 不具有几何着色功能的直接pass
-			return 0;
-		return score;
+		// 检查物理设备可用的扩展功能，并存储到数组中
+		uint32_t avaliableExtensionsCount = 0;
+		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &avaliableExtensionsCount, nullptr);
+		std::vector<VkExtensionProperties> avaliableExtensions(avaliableExtensionsCount);
+		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &avaliableExtensionsCount, avaliableExtensions.data());
+		// 将所需的扩展功能设置到set集合中，并后续通过循环遍历可用扩展功能数组，
+		// 来检查是否包含所有所需扩展功能。
+		std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+		for (const auto& extension : avaliableExtensions)
+		{
+			requiredExtensions.erase(extension.extensionName);
+		}
+		return requiredExtensions.empty();
 	}
+
+
+	// 检查设备的Capabilities、SurfaceFormat、PresentModes
+	SwapChainSupportDetails querySwapchainSupport(VkPhysicalDevice physicalDevice)
+	{
+		SwapChainSupportDetails details;
+		// 查询物理设备的基本属性
+		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &details.capabilities);
+		// 查询物理设备的表面格式属性
+		uint32_t formatsCount = 0;
+		vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatsCount, nullptr);
+		if (formatsCount != 0)
+		{
+			details.formats.resize(formatsCount);
+			vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatsCount, details.formats.data());
+		}
+		// 查询物理设备的展示模式属性
+		uint32_t presentModesCount = 0;
+		vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModesCount, nullptr);
+		if (presentModesCount != 0)
+		{
+			details.presentModes.resize(presentModesCount);
+			vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModesCount, details.presentModes.data());
+		}
+		return details;
+	}
+
+	// 检侧选择使用合适的物理设备
+	bool isDeviceSuitable(VkPhysicalDevice physicalDevice)
+	{
+		QueueFamilyIndices indices = findQueueFimalies(physicalDevice);
+		bool deviceExtensionsSupported = checkDeviceExtensionSupport(physicalDevice);
+		bool deviceSwapChainAdequate = false;
+		if (deviceExtensionsSupported)
+		{
+			SwapChainSupportDetails details = querySwapchainSupport(physicalDevice);
+			deviceSwapChainAdequate = details.isFormatsAndPresentModesEmpty();
+
+		}
+		return indices.isComplete() && deviceExtensionsSupported && (!deviceSwapChainAdequate);
+	}
+
 	// 使用isDeviceSuitable函数来筛选并选择物理设备
 	void pickPhysicalDevice()
 	{
@@ -351,63 +434,6 @@ private:
 		}
 		if(physicalDevice == VK_NULL_HANDLE)
 			throw std::runtime_error("Failed to find a suitable GPU!");
-		// -- 使用赋分方式选择物理设备 --
-		//std::multimap<int, VkPhysicalDevice> ratePhysicalDevices;
-		//for (const auto& device : physicalDevices)
-		//{
-			// 该map的元素存储方式：increment ordered
-			//ratePhysicalDevices.insert(std::make_pair(rateDeviceSuitiability(device), device) );
-		//}
-		//if (ratePhysicalDevices.rbegin()->first > 0) {
-		//	physicalDevice = ratePhysicalDevices.rbegin()->second;
-		//}
-		//else
-			//throw std::runtime_error("Failed to find a suitable GPU!");
-	}
-	// 检查当前系统的Vulkan是否支持验证层
-	bool checkValidationLayerSupport()
-	{	// 遍历获取实例层的所有属性
-		uint32_t layerCount = 0;
-		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
-		std::vector<VkLayerProperties> avaliableLayers(layerCount);
-		vkEnumerateInstanceLayerProperties(&layerCount, avaliableLayers.data());
-		//std::cout << "avaliable layer:\n";
-		//for (const auto& layer : avaliableLayers)
-		//{
-		//	std::cout << "\t" << layer.layerName << "\n";
-		//}
-		// 检查是否可用的实例层属性中是否包含了验证层
-		for (const char* layerName : validationLayers)
-		{
-			bool layerFound = false;
-			for (const auto& layerProperties : avaliableLayers)
-			{
-				if (strcmp(layerName, layerProperties.layerName) == 0)
-				{
-					layerFound = true;
-					break;
-				}
-			}
-			if (!layerFound)
-				return false;
-		}
-
-		return true;
-	}
-	// 从GLFW库中获取Vulkan扩展个数和扩展列表,并根据是否启用验证层，可以在运行时接收调试信息。
-	std::vector<const char*> getRequiredExtensions() {
-		uint32_t glfwExtensionCount = 0;
-		const char** glfwExtensions;
-		// 使用glfwGetRequiredInstanceExtensions函数获取扩展的列表和数量
-		glfwExtensions = glfwGetRequiredInstanceExtensions(&glfwExtensionCount);
-		// 构造函数（第一个参数地址，最后一个参数地址）
-		std::vector<const char*> extensions(glfwExtensions, glfwExtensions + glfwExtensionCount);
-		// 当启用验证层时，需要指明启用验证层调试扩展
-		if (enableValidationLayers)
-		{
-			extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
-		}
-		return extensions;
 	}
 
 	// 验证层信息的回调函数
@@ -421,11 +447,11 @@ private:
 		// 根据严重程度和类型决定如何处理消息
 		if (messageSeverity >= VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT)
 		{
-			std::cerr << "validation layer:\t" << pCallbackData->pMessage << std::endl;
+			std::cerr << "validation layer warning:\t" << pCallbackData->pMessage << std::endl;
 		}
 		else
 		{
-			std::cerr << "validation layer:\t" << pCallbackData->pMessage << std::endl;
+			std::cerr << "validation layer info:\t" << pCallbackData->pMessage << std::endl;
 		}
 
 		return VK_FALSE;
@@ -473,12 +499,12 @@ private:
 		VkPhysicalDeviceFeatures deviceFatures{}; //查询物理设备功能
 		// 创建逻辑设备的信息结构体
 		VkDeviceCreateInfo deviceCreateInfo{
-		.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
-		.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()), // 设定选择的队列族相关信息
-		.pQueueCreateInfos = queueCreateInfos.data(),
-		.pEnabledFeatures = &deviceFatures // 逻辑设备具有与物理设备相同的功能
+			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
+			.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size()), // 设定选择的队列族相关信息
+			.pQueueCreateInfos = queueCreateInfos.data(),
+			.pEnabledFeatures = &deviceFatures // 逻辑设备具有与物理设备相同的功能
 		};
-		// 通过添加pickuPphysicalDevice函数，都会在接下来启用指定扩展层和验证层
+		// 通过添加pickuPphysicalDevice函数，都会在接下来启用指定扩展功能和验证层
 		deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
 		deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 		
@@ -492,7 +518,6 @@ private:
 		{
 			deviceCreateInfo.enabledLayerCount = 0;
 		}
-
 		if (vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &device) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create logical device!");
 		// 获取与逻辑设备一起创建的图形队列句柄，以方便后续的图形操作的队列
@@ -503,64 +528,12 @@ private:
 
 	/*---- 此处开始展示层构建 ----*/
 
-	struct SwapChainSupportDetails {
-		VkSurfaceCapabilitiesKHR capabilities; // 交换链的基本表面功能
-		std::vector<VkSurfaceFormatKHR> formats; // 交换链的表面格式功能
-		std::vector<VkPresentModeKHR> presentModes; // 交换链的展现模式
-		bool isFormatsAndPresentModesEmpty() const
-		{
-			return formats.empty() && presentModes.empty();
-		}
-	};
+
 	void createSurface() // surface同逻辑设备创建时自动加载，此处使用glfwCreateSurface函数即可
 	{
 		if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS)
 			throw std::runtime_error("failed to create window surface!");
 	}
-	// 获取物理设备支持的功能，并检查指定的扩展功能是否支持。
-	bool checkDeviceExtensionSupport(VkPhysicalDevice physicalDevice)
-	{	
-		// 检查物理设备可用的扩展功能，并存储到数组中
-		uint32_t avaliableExtensionsCount = 0;
-		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &avaliableExtensionsCount, nullptr);
-		std::vector<VkExtensionProperties> avaliableExtensions(avaliableExtensionsCount);
-		vkEnumerateDeviceExtensionProperties(physicalDevice, nullptr, &avaliableExtensionsCount, avaliableExtensions.data());
-		// 将所需的扩展功能设置到set集合中，并后续通过循环遍历可用扩展功能数组，
-		// 来检查是否包含所有所需扩展功能。
-		std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
-		for (const auto& extension : avaliableExtensions)
-		{
-			requiredExtensions.erase(extension.extensionName);
-		}
-		return requiredExtensions.empty();
-	}
-
-
-	// 检查设备的Capabilities、SurfaceFormat、PresentModes
-	SwapChainSupportDetails querySwapchainSupport(VkPhysicalDevice physicalDevice)
-	{
-		SwapChainSupportDetails details;
-		// 查询物理设备的基本属性
-		vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physicalDevice, surface, &details.capabilities);
-		// 查询物理设备的表面格式属性
-		uint32_t formatsCount = 0;
-		vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatsCount, nullptr);
-		if (formatsCount != 0)
-		{
-			details.formats.resize(formatsCount);
-			vkGetPhysicalDeviceSurfaceFormatsKHR(physicalDevice, surface, &formatsCount, details.formats.data());
-		}
-		// 查询物理设备的展示模式属性
-		uint32_t presentModesCount = 0;
-		vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModesCount, nullptr);
-		if (presentModesCount != 0)
-		{
-			details.presentModes.resize(presentModesCount);
-			vkGetPhysicalDeviceSurfacePresentModesKHR(physicalDevice, surface, &presentModesCount, details.presentModes.data());
-		}
-		return details;
-	}
-
 	// 选择表面格式的format具有指定类型的颜色通道，colorspace具有指定类型的颜色空间
 	VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR> availableFormats)
 	{
@@ -686,7 +659,7 @@ private:
 			swapchainCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
 			swapchainCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
 			swapchainCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-			// 设置颜射目标、纹理的mipmap层级
+			// 设置图像的哪些方面被包含在图像视图中、纹理的mipmap层级
 			swapchainCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
 			swapchainCreateInfo.subresourceRange.baseMipLevel = 0;
 			swapchainCreateInfo.subresourceRange.levelCount = 1;
@@ -733,32 +706,35 @@ private:
 		VkAttachmentDescription colorAttachment{};
 		colorAttachment.format = swapChainImageFormat; // 颜色附件的格式应与交换链图像的格式匹配
 		colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
-		// 在渲染前和选然后如何处理附件中的数据
+		// 在渲染前和渲染后如何处理附件中的数据
 		colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR; // 在开始时将值清除为常数
 		colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE; // 渲染内容将存储在内存中，稍后读取
 		colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE; // 不使用模板缓冲区，将不关心
 		colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
 		// 设置初始图像布局和渲染处理后图像布局
 		colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED; // 开始时不关心图像布局
-		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // 选然后准备好使用交换链
+		colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR; // 渲染后准备好使用交换链
 		// 子通道和附件引用：引用的附件索引，引用附件的图像布局类型
 		VkAttachmentReference colorAttachmentRef{};
 		colorAttachmentRef.attachment = 0; // 附件数组的索引，因为本处只是用了一个附件，所以索引为0
 		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // 表示将附件作为颜色缓冲区布局
-		// 创建子通道：指明子通道类型，引用附件个数
+		// 创建子通道：指明子通道类型，引用附件个数和指出附件对象
 		VkSubpassDescription subpass{};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // 表面为用作图形子通道
 		subpass.colorAttachmentCount = 1; // 附件个数
 		subpass.pColorAttachments = &colorAttachmentRef; // 颜色附件对象
-		// 子通道依赖性
+		// 描述不同子通道之间的依赖性，它们之间如何协调的
 		VkSubpassDependency dependency{
-			.srcSubpass = VK_SUBPASS_EXTERNAL, // 该值指渲染通道之前或之后的隐式子通道
-			.dstSubpass = 0, // 子通道索引
+			.srcSubpass = VK_SUBPASS_EXTERNAL, // 指定依赖关系的源子通道。表示依赖于渲染通道之外的某种外部操作。
+			.dstSubpass = 0, // 依赖关系的目标子通道
+			// 指定源子通道中的哪些管道阶段（pipeline stages）完成了操作。
 			.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			.srcAccessMask = 0
+			.srcAccessMask = 0 // 指定源子通道中的哪些访问类型完成了操作。
 		};
-		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		// 指定目标子通道中的哪些管道阶段需要访问源子通道的数据。
 		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		// 指定目标子通道中的哪些访问类型需要访问源子通道的数据。
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
 
 		// 渲染通道的创建：指明附件，子通道, 子通道依赖性
 		VkRenderPassCreateInfo renderPassCreateInfo{
@@ -800,6 +776,7 @@ private:
 
 		VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageCreateInfo, fragShaderStageCreateInfo };
 
+		// 固定功能
 		// 动态状态Dynamic State：启用视口和裁剪矩形
 		std::vector<VkDynamicState> dynamicStates = {
 			VK_DYNAMIC_STATE_VIEWPORT,
@@ -840,6 +817,7 @@ private:
 		rasterizeCreateInfo.cullMode = VK_CULL_MODE_BACK_BIT; // 面剔除方式
 		rasterizeCreateInfo.frontFace = VK_FRONT_FACE_CLOCKWISE; // 正面顶点顺序
 		rasterizeCreateInfo.depthBiasEnable = VK_FALSE; // 斜率偏置
+
 		// 多重采样multiSampling
 		VkPipelineMultisampleStateCreateInfo multismapleCreateInfo{};
 		multismapleCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
@@ -849,23 +827,24 @@ private:
 		multismapleCreateInfo.pSampleMask = nullptr; // 哪些样本有效
 		multismapleCreateInfo.alphaToCoverageEnable = VK_FALSE; // Alpha到Coverage
 		multismapleCreateInfo.alphaToOneEnable = VK_FALSE; // Alpha到One
+		
 		// 颜色混合Color blending
 		// 定义颜色附件，指定每个颜色附件的混合行为：即颜色/透明度混合因子,颜色/透明度混合方式
-		VkPipelineColorBlendAttachmentState colorBlendAttachment{};
-		colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
-			VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
-		colorBlendAttachment.blendEnable = VK_FALSE; // 不启用颜色混合
+		VkPipelineColorBlendAttachmentState colorBlendAttachment{
+			.blendEnable = VK_FALSE,// 不启用颜色混合
+			.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT |
+			VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT
+		};
 		// 引用所有帧缓冲区的结构数组
-		VkPipelineColorBlendStateCreateInfo colorBlending{};
-		colorBlending.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
-		colorBlending.logicOpEnable = VK_FALSE;
-		colorBlending.logicOp = VK_LOGIC_OP_COPY;
-		colorBlending.pAttachments = &colorBlendAttachment;
-		colorBlending.attachmentCount = 1;
-		colorBlending.blendConstants[0] = 0.0f;
-		colorBlending.blendConstants[1] = 0.0f;
-		colorBlending.blendConstants[2] = 0.0f;
-		colorBlending.blendConstants[3] = 0.0f;
+		VkPipelineColorBlendStateCreateInfo colorBlending{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO,
+			.logicOpEnable = VK_FALSE,
+			.logicOp = VK_LOGIC_OP_COPY,
+			.attachmentCount = 1,
+			.pAttachments = &colorBlendAttachment,
+			.blendConstants = 0.0f
+		};
+
 		// 管道布局
 		VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo{
 		.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO,
