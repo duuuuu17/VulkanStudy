@@ -8,6 +8,7 @@ void main()
 {
 	// outColor = vec4(fragColor, 1.0);
 	// outColor = vec4(fragTexCoord, 0.0, 1.0);
-	outColor = texture(texSampler, fragTexCoord);
+	// 颜色混合操作：fragColor乘以纹理图像的rgb通道，使其在顶点附近的颜色更单一化
+	outColor = vec4(fragColor * texture(texSampler, fragTexCoord).rgb, 1.0);
 
 }

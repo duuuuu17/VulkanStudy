@@ -1,7 +1,16 @@
+// 启用yingobj库的加载模型功能
+#define TINYOBJLOADER_IMPLEMENTATION
+#include <tiny_obj_loader.h>
+// 指明stb的加载图像功能
 #define STB_IMAGE_IMPLEMENTATION
 #include<stb_image.h>
+// 指明glm的深度值范围为vulkan的规范范围[0,1]
+#define GLM_FORCE_DEPTH_ZERO_TO_ONE
 #include<glm/glm.hpp>
 #include<glm/gtc/matrix_transform.hpp>
+// 使用 glm的gtx功能需要声明启用glm的实验功能扩展
+#define GLM_ENABLE_EXPERIMENTAL
+#include<glm/gtx/hash.hpp>
 #include<chrono>
 #include<vulkan/vulkan.h>
 #include<iostream>
@@ -24,9 +33,15 @@
 #include <algorithm> // Necessary for std::clamp
 #include <fstream>
 #include <array>
+#include <unordered_map>
+#include <cmath>
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+
+const std::string MODEL_PATH = "src/VulkanTest/models/viking_room.obj";
+const std::string TEXTURE_PATH = "src/VulkanTest/texture/viking_room.png";
+
 
 const std::vector<const char*> validationLayers = {
 	"VK_LAYER_KHRONOS_validation"
@@ -75,8 +90,11 @@ struct QueueFamilyIndices {
 		//return transferFamily.has_value() && presentFamily.has_value();
 	}
 };
+
+
+
 struct Vertex {
-	glm::vec2 pos; // 顶点分量
+	glm::vec3 pos; // 顶点分量
 	glm::vec3 color; // 颜色分量
 	glm::vec2 texCoord; // 纹理坐标
 	// 顶点输入绑定描述符，描述如何从顶点缓冲区中读取顶点数据
@@ -95,7 +113,7 @@ struct Vertex {
 			attriDescription[0] = {
 				.location = 0, // 与着色器中顶点的输入索引location = index相同
 				.binding = 0, // 顶点数据索引，及数据处于那个顶点数据对象中
-				.format = VK_FORMAT_R32G32_SFLOAT, // 描述属性的数据类型
+				.format = VK_FORMAT_R32G32B32_SFLOAT, // 描述属性的数据类型
 				.offset = offsetof(Vertex, pos)
 			},
 			attriDescription[1] = {
@@ -113,7 +131,23 @@ struct Vertex {
 		};
 		return attriDescription;
 	}
+	// 在使用哈希表的容器，将Vertex作为时，需要Vertex结构能够键进行相等比较操作
+	bool operator== (const Vertex & other) const
+	{
+		return pos == other.pos && color == other.color && texCoord == other.texCoord;
+	}
 };
+// 使用模板特化来使用glm的hash表，并且指定Vertex成员进行哈希计算
+// 通过位移来减少哈希碰撞
+namespace std {
+	template<> struct hash<Vertex> {
+		size_t operator()(Vertex const& vertex) const{
+			return ((hash<glm::vec3>()(vertex.pos) ^
+				(hash<glm::vec3>()(vertex.color) << 1)) >> 1) ^
+				(hash<glm::vec2>()(vertex.texCoord) << 1);
+		}
+	};
+}
 //const std::vector<Vertex> vertices{
 //	{{0.0f, -0.5f}, {1.0f, .5f, 0.5f}},
 //	{{0.5f, 0.5f}, {0.0f, 1.0f, 0.0f}},
@@ -127,16 +161,31 @@ struct Vertex {
 //	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}}
 //};
 
-// 加入了采样纹理坐标的顶点数据对象
-const std::vector<Vertex> vertices = {
-	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
-	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
-	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
-	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
-};
-const std::vector<uint16_t> indices{
-	0,1,2,2,3,0 
-};
+// 加入了采样纹理坐标的顶点数据对象，2D model
+//const std::vector<Vertex> vertices = {
+//	{{-0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {1.0f, 0.0f}},
+//	{{0.5f, -0.5f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f}},
+//	{{0.5f, 0.5f}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}},
+//	{{-0.5f, 0.5f}, {1.0f, 1.0f, 1.0f}, {1.0f, 1.0f}}
+//};
+
+// 3D model
+//const std::vector<Vertex> vertices = {
+//	{{-0.5f, -0.5f, 0.0f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+//	{{0.5f, -0.5f, 0.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+//	{{0.5f, 0.5f, 0.0f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+//	{{-0.5f, 0.5f, 0.0f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}},
+//	
+//	{{-0.5f, -0.5f, -0.5f}, {1.0f, 0.0f, 0.0f}, {0.0f, 0.0f}},
+//	{{0.5f, -0.5f,-0.5f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}},
+//	{{0.5f, 0.5f, -0.5f}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}},
+//	{{-0.5f, 0.5f, -0.5f}, {1.0f, 1.0f, 1.0f}, {0.0f, 1.0f}}
+//};
+//const std::vector<uint16_t> indices{
+//	0,1,2,2,3,0,
+//	4,5,6,6,7,4
+//};
+// 
 // 该统一缓冲区对象保存模型-视图-投影转换矩阵
 struct UniformBufferObject {
 	alignas(16) glm::mat4 model;
@@ -201,7 +250,9 @@ private:
 
 	uint32_t currentFrames = 0; // 当前渲染的帧
 	bool framebufferResized = false; //标记已发生调整大小
-	
+	// 当使用模型加载时，我们不能使用固定的顶点和索引数据对象，而是动态创建
+	std::vector<Vertex> vertices;
+	std::vector<uint32_t> indices;
 	VkBuffer vertexBuffer; // 顶点缓存区对象
 	VkDeviceMemory vertexBufferMemory; // 实际顶点缓存区的内存对象
 	VkBuffer indicesBuffer; // 索引缓存区对象
@@ -219,6 +270,11 @@ private:
 	VkImageView textureImageView; // 纹理图像视图对象
 	VkDeviceMemory textureImageMemory; // 实际的纹理图像的内存对象
 	VkSampler textureSampler; // 纹理采样对象
+
+	uint32_t mipLevels;
+	VkImage depthImage; // 深度图像
+	VkImageView depthImageView; // 深度图像视图
+	VkDeviceMemory depthMemory; // 深度图像内存
 	void initWindow()
 	{
 		glfwInit(); // 初始化glfw库
@@ -241,22 +297,32 @@ private:
 		// 选择合适的物理设备，选择合适的图形、显示层队列族的索引和设备扩展功能
 		pickPhysicalDevice();
 		createLogicalDevice(); // 创建逻辑设备
+
 		createSwapChain(); // 创建交换链表
 		createImageView(); // 创建图像视图
+		
 		createRenderPass(); // 创建渲染通道
 		createDescriptorSetLayout(); // 创建描述符集布局
 		createGraphicsPipline(); // 创建图形管线
-		createFramebuffers(); //创建帧缓冲区
+		
 		createCommandPool(); // 创建命令池对象
+
+		createDepthResources(); // 创建深度资源
+		createFramebuffers(); //创建帧缓冲区
+		
 		createTextureImage(); // 加载纹理图像，并创建图像缓存区
 		createTextureImageView(); // 创建纹理图像视图
 		createTextureSampler(); // 创建纹理采样对象
+		loadModel(); // 加载模型数据
 		createVertexBuffer(); // 创建顶点缓冲区
 		createIndexBuffer(); // 创建索引缓冲区
+		
 		createUniformBuffer(); // 创建统一缓冲区
+		
 		createDescriptorPool(); // 创建描述符池
 		createDescriptorSets(); // 创建描述符集
 		createCommandBuffers(); // 分配命令缓冲区对象
+		
 		createSyncObject(); // 创建同步对象
 	}
 
@@ -274,6 +340,9 @@ private:
 	// 销毁交换链相关参数对象：帧缓存、图像视图、交换链对象
 	void cleanSwapChain()
 	{
+		vkDestroyImageView(device, depthImageView, nullptr);
+		vkDestroyImage(device, depthImage, nullptr);
+		vkFreeMemory(device, depthMemory, nullptr);
 		for (auto framebuffer : swapChainFramebuffers)
 		{
 			vkDestroyFramebuffer(device, framebuffer, nullptr);
@@ -287,7 +356,14 @@ private:
 	}
 	void cleanup()
 	{	
-
+		// 清除交换链表
+		cleanSwapChain();
+		// 销毁管道
+		vkDestroyPipeline(device, graphicsPipeline, nullptr);
+		// 销毁管道布局
+		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
+		// 销毁渲染通道
+		vkDestroyRenderPass(device, renderPass, nullptr);
 		// 销毁缓冲区和释放映射内存
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{
@@ -296,10 +372,7 @@ private:
 		}
 		// 销毁描述符池，同时描述符集自动释放
 		vkDestroyDescriptorPool(device, descriptorPool, nullptr);
-		// 销毁描述符集布局
-		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
-		// 清除交换链表
-		cleanSwapChain();
+		
 		// 销毁采样对象
 		vkDestroySampler(device, textureSampler, nullptr);
 		// 销毁纹理图像视图对象
@@ -307,7 +380,7 @@ private:
 		// 销毁图像缓冲对象和释放对应分配的内存地址
 		vkDestroyImage(device, textureImage, nullptr);
 		vkFreeMemory(device, textureImageMemory, nullptr);
-
+		
 		// 销毁描述符集布局
 		vkDestroyDescriptorSetLayout(device, descriptorSetLayout, nullptr);
 		// 销毁缓存区
@@ -315,12 +388,8 @@ private:
 		vkFreeMemory(device, indicesBufferMemory, nullptr);
 		vkDestroyBuffer(device, vertexBuffer, nullptr);
 		vkFreeMemory(device, vertexBufferMemory, nullptr);
-		// 销毁管道
-		vkDestroyPipeline(device, graphicsPipeline, nullptr);
-		// 销毁管道布局
-		vkDestroyPipelineLayout(device, pipelineLayout, nullptr);
-		// 销毁渲染通道
-		vkDestroyRenderPass(device, renderPass, nullptr);
+
+
 		// 删除信号量和栅栏对象
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{
@@ -360,6 +429,7 @@ private:
 
 		createSwapChain();
 		createImageView();
+		createDepthResources();
 		createFramebuffers();
 	}
 
@@ -678,7 +748,7 @@ private:
 	{
 		for (const auto& availableFormat : availableFormats)
 		{
-			if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && 
+			if (availableFormat.format == VK_FORMAT_R8G8B8A8_SRGB && 
 				availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
 				return availableFormat;
 		}
@@ -785,7 +855,8 @@ private:
 	// 创建纹理图像视图
 	void createTextureImageView()
 	{
-		textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+		textureImageView = createImageView(textureImage, mipLevels,
+			VK_FORMAT_R8G8B8A8_SRGB, VK_IMAGE_ASPECT_COLOR_BIT);
 
 	}
 	// 创建图像视图
@@ -794,11 +865,12 @@ private:
 		swapChainImageViews.resize(swapChainImages.size());
 		for (uint32_t i = 0; i < swapChainImages.size(); ++i)
 		{
-			swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
+			swapChainImageViews[i] = createImageView(swapChainImages[i], 1,
+				swapChainImageFormat, VK_IMAGE_ASPECT_COLOR_BIT);
 		}
 	}
 	// 创建图像视图的通用函数
-	VkImageView createImageView(VkImage image, VkFormat format)
+	VkImageView createImageView(VkImage image,uint32_t mipLevels, VkFormat format, VkImageAspectFlags aspectFlags)
 	{
 		VkImageViewCreateInfo imageViewInfo{};
 		imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -812,9 +884,9 @@ private:
 		imageViewInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
 		imageViewInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
 		// 设置图像的哪些方面被包含在图像视图中、纹理的mipmap层级
-		imageViewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+		imageViewInfo.subresourceRange.aspectMask = aspectFlags;
 		imageViewInfo.subresourceRange.baseMipLevel = 0;
-		imageViewInfo.subresourceRange.levelCount = 1;
+		imageViewInfo.subresourceRange.levelCount = mipLevels;
 		imageViewInfo.subresourceRange.baseArrayLayer = 0;
 		imageViewInfo.subresourceRange.layerCount = 1;
 		VkImageView imageView;
@@ -871,29 +943,53 @@ private:
 		VkAttachmentReference colorAttachmentRef{};
 		colorAttachmentRef.attachment = 0; // 附件数组的索引，因为本处只是用了一个附件，所以索引为0
 		colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL; // 表示将附件作为颜色缓冲区布局
+		
+		// 添加深度附件
+		VkAttachmentDescription depthAttachment{
+			.format = findDepthFormat(),
+			.samples = VK_SAMPLE_COUNT_1_BIT,
+			.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR,
+			.storeOp = VK_ATTACHMENT_STORE_OP_DONT_CARE, // 不关心存储深度操作，在绘制完成后不再使用
+			.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE,
+			.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE,
+			.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED, // 不关心之前的深度对象的内容
+			.finalLayout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+		};
+		VkAttachmentReference depthAttachmentRef{
+			.attachment = 1,
+			.layout = VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL
+		};
+		// 将所有附件组合为数组
+		std::array< VkAttachmentDescription, 2> attachments{ colorAttachment, depthAttachment };
+		
 		// 创建子通道：指明子通道类型，引用附件个数和指出附件对象
 		VkSubpassDescription subpass{};
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // 表面为用作图形子通道
 		subpass.colorAttachmentCount = 1; // 附件个数
 		subpass.pColorAttachments = &colorAttachmentRef; // 颜色附件对象
+		subpass.pDepthStencilAttachment = &depthAttachmentRef;
 		// 描述不同子通道之间的依赖性，它们之间如何协调的
 		VkSubpassDependency dependency{
 			.srcSubpass = VK_SUBPASS_EXTERNAL, // 指定依赖关系的源子通道。表示依赖于渲染通道之外的某种外部操作。
 			.dstSubpass = 0, // 依赖关系的目标子通道
 			// 指定源子通道中的哪些管道阶段（pipeline stages）完成了操作。
-			.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT,
-			.srcAccessMask = 0 // 指定源子通道中的哪些访问类型完成了操作。
+			// 指定完成颜色附件输出阶段和片段测试后阶段
+			.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+				| VK_PIPELINE_STAGE_LATE_FRAGMENT_TESTS_BIT,
+			.srcAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT // 指定源子通道中的哪些访问类型完成了操作。
 		};
 		// 指定目标子通道中的哪些管道阶段需要访问源子通道的数据。
-		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+		dependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT 
+			| VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
 		// 指定目标子通道中的哪些访问类型需要访问源子通道的数据。
-		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+		dependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT 
+			| VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
 
 		// 渲染通道的创建：指明附件，子通道, 子通道依赖性
 		VkRenderPassCreateInfo renderPassCreateInfo{
 		.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO,
-		.attachmentCount = 1,
-		.pAttachments = &colorAttachment,
+		.attachmentCount = static_cast<uint32_t>(attachments.size()),
+		.pAttachments = attachments.data(),
 		.subpassCount = 1,
 		.pSubpasses = &subpass,
 		.dependencyCount = 1,
@@ -986,7 +1082,20 @@ private:
 		multismapleCreateInfo.pSampleMask = nullptr; // 哪些样本有效
 		multismapleCreateInfo.alphaToCoverageEnable = VK_FALSE; // Alpha到Coverage
 		multismapleCreateInfo.alphaToOneEnable = VK_FALSE; // Alpha到One
-		
+		// 深度模板状态
+		VkPipelineDepthStencilStateCreateInfo depthStencilCreateInfo{
+			.sType = VK_STRUCTURE_TYPE_PIPELINE_DEPTH_STENCIL_STATE_CREATE_INFO,
+			.depthTestEnable = VK_TRUE, //启用深度测试，新片段的深度值与深度缓冲区进行比较
+			.depthWriteEnable = VK_TRUE, // 在启用深度测试时，确定是否将通过测试的新片段深度值写入深度缓冲区进行更新
+			.depthCompareOp = VK_COMPARE_OP_LESS, // 片段深度值与深度缓冲区值如何比较
+			.depthBoundsTestEnable = VK_FALSE, // 若启用，则只会保留在min~max参数之间的片段
+			.stencilTestEnable = VK_FALSE, // 启用模板测试
+			.front = {},
+			.back = {},
+			.minDepthBounds = 0.0f,
+			.maxDepthBounds = 1.0f,
+		};
+
 		// 颜色混合Color blending
 		// 定义颜色附件，指定每个颜色附件的混合行为：即颜色/透明度混合因子,颜色/透明度混合方式
 		VkPipelineColorBlendAttachmentState colorBlendAttachment{
@@ -1025,7 +1134,7 @@ private:
 		.pViewportState = &viewportCreateInfo,
 		.pRasterizationState = &rasterizeCreateInfo,
 		.pMultisampleState = &multismapleCreateInfo,
-		.pDepthStencilState = nullptr,
+		.pDepthStencilState = &depthStencilCreateInfo,
 		.pColorBlendState = &colorBlending,
 		.pDynamicState = &dynamicCreateInfo,
 		// 管道布局
@@ -1051,8 +1160,12 @@ private:
 		uniformBuffersMapped.resize(MAX_FRAMES_IN_FLIGHT);
 		for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{	
-			// 创建缓冲区对象
-			createBuffer(size, VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, uniformBuffers[i], uniformBuffersMemory[i]);
+			// 创建缓冲区对象，并分配设备内存，缓冲区绑定分配的设备内存对象
+			createBuffer(
+				size, 
+				VK_BUFFER_USAGE_UNIFORM_BUFFER_BIT, 
+				VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT,
+				uniformBuffers[i], uniformBuffersMemory[i]);
 			// 映射内存
 			vkMapMemory(device, uniformBuffersMemory[i], 0, size, 0, &uniformBuffersMapped[i]);
 		}
@@ -1094,17 +1207,17 @@ private:
 		std::array<VkDescriptorPoolSize, 2> poolSizes{
 			poolSizes[0] = {
 				.type = VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER,
-				.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+				.descriptorCount = MAX_FRAMES_IN_FLIGHT
 			},
 			poolSizes[1] = {
 				.type = VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER,
-				.descriptorCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT)
+				.descriptorCount = MAX_FRAMES_IN_FLIGHT
 			}
 		};
 		VkDescriptorPoolCreateInfo poolInfo{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO,
 			.flags = 0,
-			.maxSets = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT), // 最大可分配描述符个数
+			.maxSets = MAX_FRAMES_IN_FLIGHT, // 最大可分配描述符个数
 			.poolSizeCount = static_cast<uint32_t>(poolSizes.size()),
 			.pPoolSizes = poolSizes.data() // 指明描述符池大小
 		};
@@ -1122,7 +1235,7 @@ private:
 		VkDescriptorSetAllocateInfo descriptorAllocateInfo{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 			.descriptorPool = descriptorPool,
-			.descriptorSetCount = static_cast<uint32_t>(MAX_FRAMES_IN_FLIGHT), //同帧数相同
+			.descriptorSetCount = MAX_FRAMES_IN_FLIGHT, //同帧数相同
 			.pSetLayouts = layouts.data()
 		};
 		descriptorSets.resize(MAX_FRAMES_IN_FLIGHT);
@@ -1132,18 +1245,19 @@ private:
 		// 根据帧数来实际更新每个描述符集的描述符实际信息
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{	
-			// 使用描述符缓冲区，指明实际缓冲区的数据，以及大小范围
+			// 设置统一缓冲区资源信息：指明实际缓冲区的数据，以及大小范围
 			VkDescriptorBufferInfo descriptorUBOInfo{
 				.buffer = uniformBuffers[i],
 				.offset = 0,
 				.range = sizeof(UniformBufferObject)
 			};
-			// 设置纹理图像的描述符信息
+			// 设置纹理图像资源信息：指明采样器,纹理图像视图和图像布局
 			VkDescriptorImageInfo descriptorImageInfo{
 				.sampler = textureSampler,
 				.imageView = textureImageView,
 				.imageLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL
 			};
+			// 将设置的资源对象信息，准备写入到描述符集中
 			std::array<VkWriteDescriptorSet, 2> writeDescriptorSets{
 				writeDescriptorSets[0] =
 				{
@@ -1168,6 +1282,7 @@ private:
 					.pImageInfo = &descriptorImageInfo, //用于引用图像数据的描述符
 				}
 			};
+			// 更新描述符集中的描述符信息
 			vkUpdateDescriptorSets(device, static_cast<uint32_t>(writeDescriptorSets.size()), writeDescriptorSets.data(), 0, nullptr);
 		}
 	}
@@ -1178,14 +1293,15 @@ private:
 		swapChainFramebuffers.resize(swapChainImageViews.size());
 		for (size_t i = 0; i < swapChainImageViews.size(); ++i)
 		{
-			VkImageView attachment[] = {
-				swapChainImageViews[i]
+			std::array<VkImageView,2> attachments = {
+				swapChainImageViews[i],
+				depthImageView
 			};
 			VkFramebufferCreateInfo framebufferCreateInfo{ 
 				.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO,
 				.renderPass = renderPass, // 指定的渲染通道
-				.attachmentCount = 1,
-				.pAttachments = attachment, // 指定图像视图作为附件
+				.attachmentCount = static_cast<uint32_t>(attachments.size()),
+				.pAttachments = attachments.data(), // 指定图像视图作为附件
 				// 此处需要指明帧缓冲对应的图像视图的一些基本属性
 				.width = swapChainExtent.width, // 于图像视图的宽高度相同
 				.height = swapChainExtent.height,
@@ -1246,7 +1362,8 @@ private:
 	}
 
 	// 创建顶点缓存区对象，并分配内存
-	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
+	void createBuffer(VkDeviceSize size, VkBufferUsageFlags usage, 
+		VkMemoryPropertyFlags properties, VkBuffer& buffer, VkDeviceMemory& bufferMemory)
 	{
 		// 创建缓存对象
 		VkBufferCreateInfo bufferInfo{
@@ -1321,7 +1438,9 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 	// 创建图像缓冲对象，并分配实际映射内存对象
-	void createImage(uint32_t  width, uint32_t  height, VkFormat format, VkImageTiling tiling, VkImageUsageFlags usages,  VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
+	void createImage(uint32_t  width, uint32_t  height, uint32_t mipLevels, VkFormat format,
+		VkImageTiling tiling, VkImageUsageFlags usages,  
+		VkMemoryPropertyFlags properties, VkImage& image, VkDeviceMemory& imageMemory)
 	{
 		// 创建图像对象
 		VkImageCreateInfo imageInfo{
@@ -1330,7 +1449,7 @@ private:
 			.imageType = VK_IMAGE_TYPE_2D, // 作为平面数据
 			.format = format,
 			.extent = {width, height, 1},
-			.mipLevels = 1,  // mipmap等级
+			.mipLevels = mipLevels,  // mipmap等级
 			.arrayLayers = 1, // 本图像为单个对象没有使用数组
 			.samples = VK_SAMPLE_COUNT_1_BIT,
 			.tiling = tiling, // 指定纹素的排列方式：按行/定义顺序
@@ -1353,8 +1472,9 @@ private:
 		vkBindImageMemory(device, image, imageMemory, 0);
 	}
 	// 转换图像布局, 使用图像屏障进行同步
-	void transitionImageLayout(VkImage image, VkFormat format, VkImageLayout oldLayout, VkImageLayout newLayout)
-	{	
+	void transitionImageLayout(VkImage image, uint32_t mipLevels, VkFormat format,
+		VkImageLayout oldLayout, VkImageLayout newLayout)
+	{
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 		VkImageMemoryBarrier barrier{
 			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
@@ -1367,11 +1487,18 @@ private:
 				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
 				// 影响的Mip映射层索引和数量
 				.baseMipLevel = 0,
-				.levelCount = 1,
+				.levelCount = mipLevels,
 				.baseArrayLayer = 0,
-				.layerCount = 1,
+				.layerCount = 1, 
 			}
 		};
+		//// 当newLayout为模板附件时
+		//if (newLayout == VK_IMAGE_LAYOUT_STENCIL_ATTACHMENT_OPTIMAL)
+		//{	// 需要在图像特定范围参数指定哪方面被使用：深度位和模板位
+		//	barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_DEPTH_BIT;
+		//	if (hasStencilComponent(format))
+		//		barrier.subresourceRange.aspectMask |= VK_IMAGE_ASPECT_STENCIL_BIT;
+		//}
 		VkPipelineStageFlags srcStage; // 当前阶段，屏障发生前的相关访问类型、阶段类型
 		VkPipelineStageFlags dstStage; // 目标阶段，屏障发生后的相关访问类型、阶段类型
 		// 从初始化阶段到传输阶段
@@ -1382,14 +1509,24 @@ private:
 			srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT; // 当前阶段，top_of_pipe指明流水线顶部阶段
 			dstStage = VK_PIPELINE_STAGE_TRANSFER_BIT; // 目标阶段为传输
 			// 从传输阶段到着色器读取阶段
-		}else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
-		{	
+		}
+		else if (oldLayout == VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL && newLayout == VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL)
+		{
 			// src在屏障之前，dst在屏障之后
 			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;; // 传输阶段写入
 			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT; // 着色器阶段仅读
 			srcStage = VK_PIPELINE_STAGE_TRANSFER_BIT; // 当前阶段，top_of_pipe指明流水线顶部阶段
 			dstStage = VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT; // 目标阶段为传输
 		}
+		//else if (oldLayout == VK_IMAGE_LAYOUT_UNDEFINED && newLayout == VK_IMAGE_LAYOUT_DEPTH_STENCIL_ATTACHMENT_OPTIMAL)
+		//{
+		//	barrier.srcAccessMask = 0;
+		//	barrier.dstAccessMask = VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_READ_BIT | VK_ACCESS_DEPTH_STENCIL_ATTACHMENT_WRITE_BIT;
+		//	
+		//	srcStage = VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT;
+		//	// reading发生在片段初期阶段，write发生在片段后期阶段
+		//	dstStage = VK_PIPELINE_STAGE_EARLY_FRAGMENT_TESTS_BIT;
+		//}
 		else
 		{
 			throw std::invalid_argument("unsupported layout transition!");
@@ -1405,7 +1542,8 @@ private:
 		endSingleTimeCommands(commandBuffer);
 	}
 	// 将缓冲区数据复制到图像对象中
-	void copyBufferToImage(VkBuffer buffer, VkImage image, uint32_t width, uint32_t height)
+	void copyBufferToImage(VkBuffer buffer, VkImage image, 
+		uint32_t width, uint32_t height)
 	{
 		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
 		VkBufferImageCopy region{ // 指明待复制区域的结构
@@ -1437,14 +1575,18 @@ private:
 		// 设置纹理宽度高度、和纹理颜色通道数
 		int texWidth, texHeight, texChannel;
 		// uc == unsigned char，stbi_load第四个参数指，使用图像原始的图像通道数
-		stbi_uc* pixels = stbi_load("src/VulkanTest/Texture/texture.jpg", &texWidth, &texHeight, &texChannel, STBI_rgb_alpha);
+		stbi_uc* pixels = stbi_load(TEXTURE_PATH.c_str(), &texWidth, &texHeight, &texChannel, STBI_rgb_alpha);
 		VkDeviceSize size = texWidth * texHeight * 4; // STBI_rgb_alpha强制图像使用alpha通道，所以一个像素占用4个字节
+		mipLevels = static_cast<uint32_t>(std::floor(std::log2(max(texWidth, texHeight)))) + 1;
 		if (!pixels)
 			throw std::runtime_error("failed to load texture image!");
 		// 创建临时缓冲区保存图像数据
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		createBuffer(size, 
+			VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+			stagingBuffer, stagingBufferMemory);
 		// 复制数据
 		void* data;
 		vkMapMemory(device, stagingBufferMemory, 0, size, 0, &data);
@@ -1454,28 +1596,144 @@ private:
 		// 创建纹理图像缓存，设备分配内存对象，并将其进行绑定
 		createImage(
 			texWidth, texHeight, 
+			mipLevels,
 			swapChainImageFormat, 
 			VK_IMAGE_TILING_OPTIMAL, 
-			VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT, 
+			VK_IMAGE_USAGE_TRANSFER_SRC_BIT | VK_IMAGE_USAGE_TRANSFER_DST_BIT | VK_IMAGE_USAGE_SAMPLED_BIT,
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
 			textureImage, textureImageMemory);
 		// 布局转换 无状态->传输阶段
 		transitionImageLayout(
 			textureImage, 
+			mipLevels,
 			VK_FORMAT_R8G8B8A8_SRGB, 
 			VK_IMAGE_LAYOUT_UNDEFINED,
 			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL);
 		// 复制缓冲区数据到图像
 		copyBufferToImage(stagingBuffer, textureImage, texWidth, texHeight);
+		// 改为使用mipmap方式生成
+		
 		// 布局转换 管道传输阶段—>着色器仅读阶段
-		transitionImageLayout(
-			textureImage,
-			VK_FORMAT_R8G8B8A8_SRGB,
-			VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
-			VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
+		//transitionImageLayout(
+		//	textureImage,
+		//	mipLevels,
+		//	VK_FORMAT_R8G8B8A8_SRGB,
+		//	VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+		//	VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL);
 		// 销毁临时缓冲区和释放分配的临时内存对象
 		vkDestroyBuffer(device, stagingBuffer, nullptr);
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
+		generateMipmap(textureImage, VK_FORMAT_R8G8B8A8_SRGB, texWidth, texHeight, mipLevels);
+	}
+	void generateMipmap(VkImage image,VkFormat format, int32_t width, int32_t height, uint32_t mipLevels)
+	{
+		// 先检查纹理图像格式是否支持线性过滤
+		VkFormatProperties formatProperties;
+		vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProperties);
+		if (!(formatProperties.optimalTilingFeatures & VK_FORMAT_FEATURE_SAMPLED_IMAGE_FILTER_LINEAR_BIT))
+			throw std::runtime_error("texture image format does not support linear blitting!");
+
+		VkCommandBuffer commandBuffer = beginSingleTimeCommands();
+		// 初始化屏障结构体
+		VkImageMemoryBarrier barrier{
+			.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER,
+			.srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+			.image = image,
+			.subresourceRange = {
+				.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+				.levelCount = 1,
+				.baseArrayLayer = 0,
+				.layerCount = 1,
+			}
+		};
+		// 循环遍历生成mipmap
+		int32_t mipWidth = width, mipHeight = height;
+		for(uint32_t i = 1; i < mipLevels; ++i)
+		{	// 计算当前mip等级
+			barrier.subresourceRange.baseMipLevel = i - 1;
+			// 图像布局转换设置, 确保执行blit指令前的图像布局是连续的，确保图像作为源图像可读
+			// start image layout transition operator:
+			// layout: src->dst : transfer_dst -> transfer_src
+			// Access: src->dst : transfer_write-> transfer_read 
+			// stage : transfer -> transfer
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+			barrier.dstAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			vkCmdPipelineBarrier(
+				commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_TRANSFER_BIT,
+				0,
+				0, nullptr, // 不内存屏障
+				0, nullptr, // 不适用缓冲区内存屏障
+				1, &barrier // 使用图像内存屏障
+			);
+			// 设置blit命令参数
+			// blit操作：描述图像的复制操作。
+			// 在生成mipmap图像操作中，我们需要将新的一级图像的宽高度/2
+			VkImageBlit blit{
+				.srcSubresource = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.mipLevel = i - 1,
+					.baseArrayLayer = 0,
+					.layerCount = 1,
+				},
+				.srcOffsets = {{0,0,0}, {mipWidth, mipHeight, 1}},
+				.dstSubresource = {
+					.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT,
+					.mipLevel = i,
+					.baseArrayLayer = 0,
+					.layerCount = 1
+				},
+				.dstOffsets = {{0,0,0}, {mipWidth >1? mipWidth /2 : 1, mipHeight > 1 ? mipHeight / 2 : 1, 1}}
+			};
+			vkCmdBlitImage( // blit指令的布局转换跟屏障前的布局转换是连续的
+				commandBuffer,
+				image, VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL,
+				image, VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+				1, &blit,
+				VK_FILTER_LINEAR // 采用线性过滤
+			);
+
+
+			// 图像布局转换设置,blit指令执行后，i-1的mip层图像作为纹理着色器读取，而不会再修改
+			// end image layout transition operator:
+			// layout: src->dst : transfer_src -> shader_read
+			// Access: src->dst : transfer_read-> shader_read 
+			// stage : transfer -> shader
+			barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_SRC_OPTIMAL;
+			barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+			barrier.srcAccessMask = VK_ACCESS_TRANSFER_READ_BIT;
+			barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+			vkCmdPipelineBarrier(
+			commandBuffer,
+				VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+				0,
+				0, nullptr, // 不内存屏障
+				0, nullptr, // 不适用缓冲区内存屏障
+				1, &barrier // 使用图像内存屏障
+			);
+			// 为下一轮mipmap图像宽高度计算更新
+			if (mipWidth > 1) mipWidth /= 2;
+			if (mipHeight > 1) mipHeight /= 2;
+		};
+		//设置最后一层的mipmap布局,最后一层的mipmap图像不能被传输，而仅供着色器只读
+		barrier.subresourceRange.baseMipLevel = mipLevels - 1;
+		barrier.oldLayout = VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL;
+		barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+		barrier.srcAccessMask = VK_ACCESS_TRANSFER_WRITE_BIT;
+		barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
+		vkCmdPipelineBarrier(
+			commandBuffer,
+			VK_PIPELINE_STAGE_TRANSFER_BIT, VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
+			0,
+			0, nullptr,
+			0, nullptr,
+			1, &barrier
+		);
+
+		endSingleTimeCommands(commandBuffer);
 	}
 	// 创建采样器
 	void createTextureSampler()
@@ -1503,7 +1761,7 @@ private:
 			.compareOp = VK_COMPARE_OP_ALWAYS,
 			// mipmap LOD
 			.minLod = 0.0f,
-			.maxLod = 0.0f,
+			.maxLod = VK_LOD_CLAMP_NONE, // == 1000.0f
 			.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK, // 边界颜色
 			.unnormalizedCoordinates = VK_FALSE, // 是否使用非归一化坐标
 		};
@@ -1576,10 +1834,12 @@ private:
 		// 设置渲染区域的大小
 		renderPassInfo.renderArea.offset = { 0,0 };
 		renderPassInfo.renderArea.extent = swapChainExtent;
-		// 表示颜色附件的初始清除值
-		VkClearValue clearColor = { {{0.0f,0.0f, 0.0f,1.0f}} };
-		renderPassInfo.clearValueCount = 1;
-		renderPassInfo.pClearValues = &clearColor;
+		// 表示颜色附件和深度模板附件的初始清除值
+		std::array<VkClearValue, 2> clearValues{};
+		clearValues[0].color = {{0.0f,0.0f, 0.0f,1.0f}};
+		clearValues[1].depthStencil = { 1.0, 0 };
+		renderPassInfo.clearValueCount = static_cast<uint32_t>(clearValues.size());
+		renderPassInfo.pClearValues = clearValues.data();
 		// 开启渲染通道
 		vkCmdBeginRenderPass(commandBuffer, &renderPassInfo, VK_SUBPASS_CONTENTS_INLINE);
 		
@@ -1608,7 +1868,7 @@ private:
 		VkBuffer vertexBuffers[] = { vertexBuffer };
 		VkDeviceSize offsets[] = { 0 };
 		vkCmdBindVertexBuffers(commandBuffer, 0, 1, vertexBuffers, offsets );
-		vkCmdBindIndexBuffer(commandBuffer, indicesBuffer, 0, VK_INDEX_TYPE_UINT16);
+		vkCmdBindIndexBuffer(commandBuffer, indicesBuffer, 0, VK_INDEX_TYPE_UINT32);
 		// 发出绘制三角形指令
 		//vkCmdDraw(commandBuffer, static_cast<uint32_t>(vertices.size()), 1, 0, 0);
 		vkCmdDrawIndexed(commandBuffer, static_cast<uint32_t>(indices.size()), 1, 0, 0, 0);
@@ -1678,7 +1938,6 @@ private:
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
 
-
 		// 提交至图形队列
 		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrames]) != VK_SUCCESS)
 		{
@@ -1732,6 +1991,88 @@ private:
 				throw std::runtime_error("failed to create semaphore!");
 			}
 		}
+	}
+	void createDepthResources()
+	{
+		VkFormat depthFormat = findDepthFormat();
+		createImage(
+			swapChainExtent.width, swapChainExtent.height,
+			1,
+			depthFormat,
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
+			depthImage, depthMemory
+		);
+		depthImageView = createImageView(
+			depthImage, 
+1,
+			depthFormat,
+			VK_IMAGE_ASPECT_DEPTH_BIT);
+	}
+	// 检测是否有指定类型的格式
+	VkFormat findSupportedFormat(const std::vector<VkFormat>& candidates, VkImageTiling tiling, VkFormatFeatureFlags features)
+	{
+		for (VkFormat format : candidates)
+		{	// 获取物理设备表格属性
+			VkFormatProperties formatProperties;
+			vkGetPhysicalDeviceFormatProperties(physicalDevice, format, &formatProperties);
+			// 检测是否具有指定的像素排列方式和指定的format属性的format格式
+			if (tiling == VK_IMAGE_TILING_LINEAR && (formatProperties.linearTilingFeatures & features) == features)
+				return format;
+			else if (tiling == VK_IMAGE_TILING_OPTIMAL && (formatProperties.optimalTilingFeatures & features) == features)
+				return format;
+		}
+		throw std::runtime_error("failed to find supported format!");
+	}
+	// 是否具有支持深度/模板附件的格式
+	VkFormat findDepthFormat()
+	{
+		return findSupportedFormat(
+			{ VK_FORMAT_D32_SFLOAT, VK_FORMAT_D32_SFLOAT_S8_UINT, VK_FORMAT_D24_UNORM_S8_UINT },
+			VK_IMAGE_TILING_OPTIMAL,
+			VK_FORMAT_FEATURE_DEPTH_STENCIL_ATTACHMENT_BIT);
+	}
+	// 是否具有模板分量
+	bool hasStencilComponent(VkFormat format)
+	{
+		return format == VK_FORMAT_D32_SFLOAT_S8_UINT || format == VK_FORMAT_D24_UNORM_S8_UINT;
+	}
+	void loadModel()
+	{
+		tinyobj::attrib_t attrib;
+		std::vector<tinyobj::shape_t> shapes;
+		std::vector<tinyobj::material_t> materials;
+		std::string warn, err;
+		if (!tinyobj::LoadObj(&attrib, &shapes, &materials, &warn, &err, MODEL_PATH.c_str()))
+			throw std::runtime_error(warn + err);
+		// 去重顶点：容易元素结构为：<顶点,索引>
+		std::unordered_map<Vertex, uint32_t> uniqueVertices;
+		for (const auto& shape : shapes)
+		{
+			for (const auto& index : shape.mesh.indices)
+			{
+				Vertex vertex{};
+				vertex.pos = {
+					attrib.vertices[3 * index.vertex_index + 0],
+					attrib.vertices[3 * index.vertex_index + 1],
+					attrib.vertices[3 * index.vertex_index + 2],
+				};
+				vertex.color = { 1.0,1.0, 1.0 };
+				vertex.texCoord = {
+					attrib.texcoords[2 * index.texcoord_index + 0],
+					1.0f - attrib.texcoords[2 * index.texcoord_index + 1],
+				};
+				// 若unordered_map容器中不存在该顶点，则加入容器中，
+				if (!uniqueVertices.count(vertex))
+				{
+					uniqueVertices[vertex] = static_cast<uint32_t>(vertices.size());
+					vertices.push_back(vertex);
+				}
+				indices.push_back(uniqueVertices[vertex]);
+			}
+		}
+
 	}
 };
 int main()
