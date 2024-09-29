@@ -12,7 +12,9 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #include<glm/gtx/hash.hpp>
 #include<chrono>
-#include<vulkan/vulkan.h>
+#include<vulkan/vulkan_core.h>
+#include<vulkan/vk_enum_string_helper.h>
+#include "vma/vk_mem_alloc.h"
 #include<iostream>
 #include<stdexcept>
 #include<cstdlib>
@@ -35,6 +37,19 @@
 #include <array>
 #include <unordered_map>
 #include <cmath>
+#include <unordered_set>
+#define VK_CHECK(func)											\
+do{																\
+	const VkResult result = func;								\
+	if (result != VK_SUCCESS) {									\
+		std::cerr <<"Error calling funciont" << #func << "at" << __FILE__ << ":"							\
+			<< __LINE__ << ". Result is " <<  string_VkResult(result) << std::endl;			\
+			assert(false);										\
+	}															\
+}while(0)														
+
+
+
 const uint32_t WIDTH = 800;
 const uint32_t HEIGHT = 600;
 const uint32_t MAX_FRAMES_IN_FLIGHT = 2;
@@ -69,6 +84,7 @@ static VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugU
 	else {
 		return VK_ERROR_EXTENSION_NOT_PRESENT;
 	}
+	
 
 }
 static void DestroyDebugUtilsMessengerEXT(VkInstance instance,
@@ -89,6 +105,7 @@ struct QueueFamilyIndices {
 		return grahicsFamily.has_value() && presentFamily.has_value();
 		//return transferFamily.has_value() && presentFamily.has_value();
 	}
+
 };
 
 
@@ -98,13 +115,13 @@ struct Vertex {
 	glm::vec3 color; // 颜色分量
 	glm::vec2 texCoord; // 纹理坐标
 	// 顶点输入绑定描述符，描述如何从顶点缓冲区中读取顶点数据
-	static VkVertexInputBindingDescription getBindingDescription() {
+	static std::array<VkVertexInputBindingDescription, 1> getBindingDescription() {
 		VkVertexInputBindingDescription bindingDescription{
 			.binding = 0, // 绑定索引
 			.stride = sizeof(Vertex), // 绑定的顶点数据之间的步长
 			.inputRate = VK_VERTEX_INPUT_RATE_VERTEX // 输入速率，此处为每个顶点都会更新一次数据
 		};
-		return bindingDescription;
+		return {bindingDescription};
 	}
 	// 顶点输入属性描述符,
 	// 指明绑定顶点数据中的每个成员，每个成员在数据的起始地址和数据类型
@@ -131,7 +148,7 @@ struct Vertex {
 		};
 		return attriDescription;
 	}
-	// 在使用哈希表的容器，将Vertex作为时，需要Vertex结构能够键进行相等比较操作
+	// 在使用哈希表的容器，将Vertex作为键时，需要Vertex结构能够键进行相等比较操作
 	bool operator== (const Vertex & other) const
 	{
 		return pos == other.pos && color == other.color && texCoord == other.texCoord;
@@ -208,12 +225,12 @@ private:
 	/*---- 实例化：遍历扩展层、(可选)插入验证层、执行实例化 ----*/
 	/*---- 设备初始化：选择物理设备、创建逻辑设备 ----*/
 	GLFWwindow* window; // 窗口对象
-	VkInstance instance; // 实例对象
-	VkDebugUtilsMessengerEXT debugMessenger; // 验证层的调试工具的消息对象
+	VkInstance instance{ VK_NULL_HANDLE }; // 实例对象
+	VkDebugUtilsMessengerEXT debugMessenger{ VK_NULL_HANDLE }; // 验证层的调试工具的消息对象
 
 	// 初始化物理设备对象，表示当前该对象没有分配资源句柄
 	VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
-	VkDevice device;// 逻辑设备
+	VkDevice device{ VK_NULL_HANDLE };// 逻辑设备
 	VkQueue graphicsQueue; // 队列与逻辑设备一起自动创建，我们需要使用成员获取
 	VkQueue presentQueue; // 展示层所需队列
 	// 展示层所需参数:
@@ -226,27 +243,27 @@ private:
 			return formats.empty() && presentModes.empty();
 		}
 	};
-	VkSurfaceKHR surface; // 窗口表面创建
-	VkSwapchainKHR swapchain; // 交换链对象
-	std::vector<VkImage> swapChainImages; // 交换链图像
+	VkSurfaceKHR surface{ VK_NULL_HANDLE }; // 窗口表面创建
+	VkSwapchainKHR swapchain{ VK_NULL_HANDLE }; // 交换链对象
+	std::vector<VkImage> swapChainImages{ VK_NULL_HANDLE }; // 交换链图像
 	VkFormat swapChainImageFormat;
 	VkExtent2D swapChainExtent;
-	std::vector<VkImageView> swapChainImageViews;// 交换链图像视图对象
-	std::vector<VkFramebuffer> swapChainFramebuffers;
+	std::vector<VkImageView> swapChainImageViews{ VK_NULL_HANDLE };// 交换链图像视图对象
+	std::vector<VkFramebuffer> swapChainFramebuffers{ VK_NULL_HANDLE };
 
 	// 渲染通道设置参数
-	VkRenderPass renderPass; // 渲染通道对象
-	VkDescriptorSetLayout descriptorSetLayout; // 描述符集布局对象
-	VkPipelineLayout pipelineLayout; // 管道布局对象
-	VkPipeline graphicsPipeline;	// 图形管道
+	VkRenderPass renderPass{ VK_NULL_HANDLE }; // 渲染通道对象
+	VkDescriptorSetLayout descriptorSetLayout{ VK_NULL_HANDLE }; // 描述符集布局对象
+	VkPipelineLayout pipelineLayout{ VK_NULL_HANDLE }; // 管道布局对象
+	VkPipeline graphicsPipeline{ VK_NULL_HANDLE };	// 图形管道
 
 	// 帧缓冲区参数
 	// 命令缓冲区参数
-	VkCommandPool commandPool;  // 命令池对象
-	std::vector<VkCommandBuffer> commandBuffers; // 命令缓冲区对象
+	VkCommandPool commandPool{ VK_NULL_HANDLE };  // 命令池对象
+	std::vector<VkCommandBuffer> commandBuffers{ VK_NULL_HANDLE }; // 命令缓冲区对象
 	// 同步参数
-	std::vector<VkSemaphore> imageAvailableSemaphores; // 表示图像可用信号
-	std::vector<VkSemaphore> renderFinishedSemaphores; // 表示渲染结束信号
+	std::vector<VkSemaphore> imageAvailableSemaphores{ VK_NULL_HANDLE }; // 表示图像可用信号
+	std::vector<VkSemaphore> renderFinishedSemaphores{ VK_NULL_HANDLE }; // 表示渲染结束信号
 	std::vector<VkFence> inFlightFences; // 用于控制渲染通道一次执行只渲染一帧
 
 	uint32_t currentFrames = 0; // 当前渲染的帧
@@ -254,10 +271,10 @@ private:
 	// 当使用模型加载时，我们不能使用固定的顶点和索引数据对象，而是动态创建
 	std::vector<Vertex> vertices;
 	std::vector<uint32_t> indices;
-	VkBuffer vertexBuffer; // 顶点缓存区对象
-	VkDeviceMemory vertexBufferMemory; // 实际顶点缓存区的内存对象
-	VkBuffer indicesBuffer; // 索引缓存区对象
-	VkDeviceMemory indicesBufferMemory; // 实际索引缓存区的内存对象
+	VkBuffer vertexBuffer{ VK_NULL_HANDLE }; // 顶点缓存区对象
+	VkDeviceMemory vertexBufferMemory{ VK_NULL_HANDLE }; // 实际顶点缓存区的内存对象
+	VkBuffer indicesBuffer{ VK_NULL_HANDLE }; // 索引缓存区对象
+	VkDeviceMemory indicesBufferMemory{ VK_NULL_HANDLE }; // 实际索引缓存区的内存对象
 
 	// 创建统一缓冲区对象的缓冲区、以及相应的分配设备内存，以及统一缓冲区的数据
 	std::vector<VkBuffer> uniformBuffers;
@@ -297,7 +314,7 @@ private:
 		app->framebufferResized = true;
 	}
 	void initVulkan()
-	{
+	{	
 		createInstance(); // 创建实例
 		setupDebugMessenger(); // 设置调试信息对象
 		createSurface(); //创建展示层所需的窗口表面
@@ -439,7 +456,7 @@ private:
 		}
 		vkDeviceWaitIdle(device);
 		cleanSwapChain(); // 不能再使用之前的旧对象
-
+		// 重新创建交换链、图像视图、颜色附件和深度附件以及帧缓冲对象
 		createSwapChain();
 		createImageView();
 		createColorResources();
@@ -447,6 +464,23 @@ private:
 		createFramebuffers();
 	}
 
+	// 检查是否可用的实例层属性中是否包含了验证层
+	std::unordered_set<std::string> filterExtension(
+		std::vector<std::string> availableExtension,
+		std::vector<std::string> requiredExtension
+	) {
+		std::sort(availableExtension.begin(), availableExtension.end());
+		std::sort(requiredExtension.begin(), requiredExtension.end());
+		std::vector<std::string> result;
+		// 通过对集合的交集处理，返回对象。注意传递的两个集合必须是有序
+		std::set_intersection(
+			availableExtension.begin(), availableExtension.end(),
+			requiredExtension.begin(), requiredExtension.end(),
+			std::back_inserter(result)
+		);
+		return std::unordered_set<std::string>(result.begin(), result.end());
+	}
+	
 	// 检查当前系统的Vulkan是否支持验证层
 	bool checkValidationLayerSupport()
 	{	// 遍历获取实例层的所有属性
@@ -454,28 +488,45 @@ private:
 		vkEnumerateInstanceLayerProperties(&layerCount, nullptr);
 		std::vector<VkLayerProperties> avaliableLayers(layerCount);
 		vkEnumerateInstanceLayerProperties(&layerCount, avaliableLayers.data());
-		//std::cout << "avaliable layer:\n";
-		//for (const auto& layer : avaliableLayers)
-		//{
-		//	std::cout << "\t" << layer.layerName << "\n";
-		//}
+		
+		// 使用transform转变元素类型，并存放至新数组中
+		std::vector<std::string>layers;
+		std::transform(
+			avaliableLayers.begin(),
+			avaliableLayers.end(),
+			std::back_inserter(layers),
+			[](const VkLayerProperties& property) {
+				return property.layerName;
+			});
+		
 		// 检查是否可用的实例层属性中是否包含了验证层
-		for (const char* layerName : validationLayers)
-		{
-			bool layerFound = false;
-			for (const auto& layerProperties : avaliableLayers)
+		//for (const char* layerName : validationLayers)
+		//{
+		//	bool layerFound = false;
+		//	for (const auto& layerProperties : avaliableLayers)
+		//	{
+		//		if (strcmp(layerName, layerProperties.layerName) == 0)
+		//		{
+		//			layerFound = true;
+		//			break;
+		//		}
+		//	}
+		//	if (!layerFound)
+		//		return false;
+		//}
+		//return true;
+		std::vector<std::string> validationLayersStr(layers.size());
+		std::transform(
+			validationLayers.begin(),
+			validationLayers.end(),
+			validationLayersStr.begin(),
+			[](const char* layer)
 			{
-				if (strcmp(layerName, layerProperties.layerName) == 0)
-				{
-					layerFound = true;
-					break;
-				}
+				return std::string(layer);
 			}
-			if (!layerFound)
-				return false;
-		}
-
-		return true;
+		);
+		
+		return !filterExtension(layers, validationLayersStr).empty();
 	}
 	// 从GLFW库中获取Vulkan扩展个数和扩展列表,并根据是否启用验证层，可以在运行时接收调试信息。
 	std::vector<const char*> getRequiredExtensions() {
@@ -498,7 +549,7 @@ private:
 		// 验证层启用并检查是否支持验证层
 		if (enableValidationLayers && !checkValidationLayerSupport())
 			throw std::runtime_error("validation layers requested, but not avaliable!");
-
+		
 		// 创建实例前，创建保存应用程序信息的结构体：
 		//	声明该结构体类型，应用程序名称/版本，引擎名称/版本，vulkan api版本
 		// 以便优化我们的特定应用程序
@@ -541,7 +592,7 @@ private:
 
 	}
 
-	QueueFamilyIndices findQueueFimalies(VkPhysicalDevice physicalDevice)
+	QueueFamilyIndices findQueueFamilies(VkPhysicalDevice physicalDevice)
 	{
 		// 查找图形队列的数量和存储所有队列的属性对象
 		uint32_t queueFamilyCount = 0;
@@ -616,7 +667,7 @@ private:
 	bool isDeviceSuitable(VkPhysicalDevice physicalDevice)
 	{
 		// 查询设备是否具有指定功能队列，并获取队列索引
-		QueueFamilyIndices indices = findQueueFimalies(physicalDevice);
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		// 检查设备的扩展功能支持情况
 		bool deviceExtensionsSupported = checkDeviceExtensionSupport(physicalDevice);
 		// 查询设备是否支持各向异性采样
@@ -700,7 +751,7 @@ private:
 	void createLogicalDevice() 
 	{	
 		// 获取队列族索引
-		QueueFamilyIndices indices = findQueueFimalies(physicalDevice);
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		// 创建队列族数组，保存图形操作和展示操作的队列
 		std::vector<VkDeviceQueueCreateInfo> queueCreateInfos;
 		std::set<uint32_t> uniqueQueueFamilies = { // 以图形队列和展示队列的索引构建集合,顺便去重
@@ -720,8 +771,8 @@ private:
 		}
 		
 		VkPhysicalDeviceFeatures deviceFatures{}; //查询物理设备功能
-		deviceFatures.samplerAnisotropy = VK_TRUE;
-		deviceFatures.sampleRateShading = VK_TRUE;
+		deviceFatures.samplerAnisotropy = VK_TRUE; // 启用各向异性
+		deviceFatures.sampleRateShading = VK_TRUE; // 启用着色采样
 		// 创建逻辑设备的信息结构体
 		VkDeviceCreateInfo deviceCreateInfo{
 			.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO,
@@ -755,7 +806,7 @@ private:
 
 
 	void createSurface() // surface同逻辑设备创建时自动加载，此处使用glfwCreateSurface函数即可
-	{
+	{	
 		if (glfwCreateWindowSurface(instance, window, nullptr, &surface) != VK_SUCCESS)
 			throw std::runtime_error("failed to create window surface!");
 	}
@@ -813,7 +864,9 @@ private:
 		uint32_t imageCount = swapchainSupport.capabilities.minImageCount + 1;
 		if (swapchainSupport.capabilities.maxImageCount > 0 && imageCount > swapchainSupport.capabilities.maxImageCount)
 			imageCount = swapchainSupport.capabilities.maxImageCount;
-		// 创建交换链信息结构体
+		// 创建交换链信息结构体,设置:
+		// 颜色格式和颜色空间Format，图像大小，队列索引，不同队列的图像共享方式
+		// 指定呈现模式，图像呈现在屏幕前的预转换，多个图像的组合方式
 		VkSwapchainCreateInfoKHR swapchainCreateInfo{
 		.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR,
 		.surface = surface,
@@ -827,7 +880,7 @@ private:
 		.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT 
 		};
 		// 交换链队列族参数
-		QueueFamilyIndices indices = findQueueFimalies(physicalDevice);
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		uint32_t queueFamilyIndices[] = {indices.grahicsFamily.value(), indices.presentFamily.value()};
 		// 如果图形和展示队列不同，那么此处根据教程使用并发模式
 		if (indices.grahicsFamily != indices.presentFamily)
@@ -886,7 +939,8 @@ private:
 		}
 	}
 	// 创建图像视图的通用函数
-	VkImageView createImageView(VkImage image,uint32_t mipLevels, VkFormat format, VkImageAspectFlags aspectFlags)
+	VkImageView createImageView(VkImage image,uint32_t mipLevels, 
+		VkFormat format, VkImageAspectFlags aspectFlags)
 	{
 		VkImageViewCreateInfo imageViewInfo{};
 		imageViewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
@@ -944,6 +998,7 @@ private:
 	void createRenderPass() 
 	{
 		// 添加附件描述符：设置附件格式、采样方式、从内存的加载和存储方式，模板缓冲区的加载和存储方式、最初和最终渲染图像布局方式
+		// 附件与帧缓冲对象中的附件参数(元素为图像视图对象)相关联
 		VkAttachmentDescription colorAttachment{};
 		colorAttachment.format = swapChainImageFormat; // 颜色附件的格式应与交换链图像的格式匹配
 		colorAttachment.samples = massSamples;
@@ -1001,8 +1056,8 @@ private:
 		subpass.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS; // 表面为用作图形子通道
 		subpass.colorAttachmentCount = 1; // 附件个数
 		subpass.pColorAttachments = &colorAttachmentRef; // 颜色附件对象
-		subpass.pDepthStencilAttachment = &depthAttachmentRef;
-		subpass.pResolveAttachments = &colorAttachmentResolveRef;
+		subpass.pDepthStencilAttachment = &depthAttachmentRef; // 深度模板附件
+		subpass.pResolveAttachments = &colorAttachmentResolveRef;  // 解析附件
 
 		// 描述不同子通道之间的依赖性，它们之间如何协调的
 		VkSubpassDependency dependency{
@@ -1037,7 +1092,7 @@ private:
 		};
 		if (vkCreateRenderPass(device, &renderPassCreateInfo, nullptr, &renderPass) != VK_SUCCESS)
 			throw std::runtime_error("Failed to create renderpass!");
-		
+	
 	}
 
 	// 创建图形管线的主体函数
@@ -1052,7 +1107,7 @@ private:
 		// 创建顶点着色器模块的信息结构体
 		VkPipelineShaderStageCreateInfo vertShaderStageCreateInfo{};
 		vertShaderStageCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-		// 指明该着色器在管线着色器的哪个处理阶段
+		// 指明该着色器模块在管线着色器的哪个处理阶段
 		vertShaderStageCreateInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
 		vertShaderStageCreateInfo.module = vertShaderModule;
 		vertShaderStageCreateInfo.pName = "main"; // 指明着色器调用的函数(入口点)
@@ -1083,8 +1138,8 @@ private:
 		// 顶点输入Vertex Input
 		VkPipelineVertexInputStateCreateInfo vertexInputCreateInfo{};
 		vertexInputCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
-		vertexInputCreateInfo.vertexBindingDescriptionCount = 1;
-		vertexInputCreateInfo.pVertexBindingDescriptions = &bindingDescription;
+		vertexInputCreateInfo.vertexBindingDescriptionCount = static_cast<uint32_t>(bindingDescription.size());
+		vertexInputCreateInfo.pVertexBindingDescriptions = bindingDescription.data();
 		vertexInputCreateInfo.vertexAttributeDescriptionCount = static_cast<uint32_t>(attriDescription.size());
 		vertexInputCreateInfo.pVertexAttributeDescriptions = attriDescription.data();
 		
@@ -1229,13 +1284,15 @@ private:
 			.descriptorCount = 1,
 			.stageFlags = VK_SHADER_STAGE_FRAGMENT_BIT, // 设置阶段为片段着色器
 		};
+
 		// 将设置的描述符布局对象存放至数组对象
 		std::array < VkDescriptorSetLayoutBinding,2> bindings = { uboLayoutBinding, samplerLayoutBinding };
-
+		
 		VkDescriptorSetLayoutCreateInfo descriptorSetLayoutInfo{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_LAYOUT_CREATE_INFO,
 			.bindingCount = static_cast<uint32_t>(bindings.size()),
-			.pBindings = bindings.data()
+			.pBindings = bindings.data(),
+			// .pNext = // VkDescriptorSetLayoutBindingFlagsCreateInfo object
 		};
 		if (vkCreateDescriptorSetLayout(device, &descriptorSetLayoutInfo, nullptr, &descriptorSetLayout) != VK_SUCCESS)
 			throw std::runtime_error("failed to create the descriptor set layout!");
@@ -1271,7 +1328,7 @@ private:
 	{	
 		// 创建同样数量的描述符集布局
 		std::vector<VkDescriptorSetLayout> layouts(MAX_FRAMES_IN_FLIGHT, descriptorSetLayout);
-		// 描述符集喷配信息，指明引用的描述符池、描述符集布局
+		// 描述符集分配信息，指明引用的描述符池、描述符集布局
 		VkDescriptorSetAllocateInfo descriptorAllocateInfo{
 			.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_SET_ALLOCATE_INFO,
 			.descriptorPool = descriptorPool,
@@ -1356,7 +1413,7 @@ private:
 	void createCommandPool()
 	{	
 		// 获取交换链的队列索引值
-		QueueFamilyIndices indices = findQueueFimalies(physicalDevice);
+		QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
 		// 指定命令池创建方式、指向的队列族索引
 		VkCommandPoolCreateInfo commandPoolInfo
 		{
@@ -1819,7 +1876,9 @@ private:
 		VkDeviceSize size = sizeof(vertices[0]) * vertices.size();
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+			stagingBuffer, stagingBufferMemory);
 
 		// 准备填写入实际内容
 		void* data;
@@ -1827,7 +1886,9 @@ private:
 		vkMapMemory(device, stagingBufferMemory, 0, size, 0, &data);
 		memcpy(data, vertices.data(), (size_t)size); // 复制内容
 		vkUnmapMemory(device, stagingBufferMemory); // 取消映射
-		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, vertexBuffer, vertexBufferMemory);
+		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_VERTEX_BUFFER_BIT,
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+			vertexBuffer, vertexBufferMemory);
 		// 复制数据
 		copyBuffer(stagingBuffer, vertexBuffer, size);
 		// 销毁创建的临时缓冲区
@@ -1842,7 +1903,9 @@ private:
 		VkDeviceSize size = sizeof(indices[0]) * indices.size();
 		VkBuffer stagingBuffer;
 		VkDeviceMemory stagingBufferMemory;
-		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, stagingBuffer, stagingBufferMemory);
+		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_SRC_BIT, 
+			VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT | VK_MEMORY_PROPERTY_HOST_COHERENT_BIT, 
+			stagingBuffer, stagingBufferMemory);
 		
 		// 准备填写入实际内容
 		void* data;
@@ -1850,7 +1913,9 @@ private:
 		vkMapMemory(device, stagingBufferMemory, 0, size, 0, &data);
 		memcpy(data, indices.data(), (size_t)size); // 复制内容
 		vkUnmapMemory(device, stagingBufferMemory); // 取消映射
-		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, indicesBuffer, indicesBufferMemory);
+		createBuffer(size, VK_BUFFER_USAGE_TRANSFER_DST_BIT | VK_BUFFER_USAGE_INDEX_BUFFER_BIT, 
+			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT, 
+			indicesBuffer, indicesBufferMemory);
 		// 复制数据
 		copyBuffer(stagingBuffer, indicesBuffer, size);
 		// 销毁创建的临时缓冲区
@@ -1859,10 +1924,10 @@ private:
 		vkFreeMemory(device, stagingBufferMemory, nullptr);
 	}
 
-	// 记录命令缓冲区
+	// 记录命令至命令缓冲区
 	void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex)
 	{
-		// 设置命令缓冲区开始记录的结构体
+		// 设置命令缓冲区开始记录的结构体，进行初始化
 		VkCommandBufferBeginInfo beginInfo{};
 		beginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
 		beginInfo.flags = 0; // 不选择如何使用缓冲区命令
@@ -1983,7 +2048,7 @@ private:
 		submitInfo.signalSemaphoreCount = 1;
 		submitInfo.pSignalSemaphores = signalSemaphores;
 
-		// 提交至图形队列
+		// 提交至图形队列,并指明栅栏表示当前绘制命令完毕
 		if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFences[currentFrames]) != VK_SUCCESS)
 		{
 			throw std::runtime_error("failed to submit draw command buffer!");
@@ -2013,6 +2078,7 @@ private:
 		}
 		currentFrames = (currentFrames + 1) % MAX_FRAMES_IN_FLIGHT;
 	}
+	
 	// 创建同步对象
 	void createSyncObject()
 	{
@@ -2029,12 +2095,18 @@ private:
 		};
 		for (size_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i)
 		{
-			if (vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS
-				|| vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS
-				|| vkCreateFence(device, &fenceCreateInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
-			{
-				throw std::runtime_error("failed to create semaphore!");
-			}
+			//if (vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &imageAvailableSemaphores[i]) != VK_SUCCESS
+			//	|| vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &renderFinishedSemaphores[i]) != VK_SUCCESS
+			//	|| vkCreateFence(device, &fenceCreateInfo, nullptr, &inFlightFences[i]) != VK_SUCCESS)
+			//{
+			//	throw std::runtime_error("failed to create semaphore!");
+			//}
+			
+			VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &imageAvailableSemaphores[i]));
+			VK_CHECK(vkCreateSemaphore(device, &semaphoreCreateInfo, nullptr, &renderFinishedSemaphores[i]));
+			VK_CHECK(vkCreateFence(device, &fenceCreateInfo, nullptr, &inFlightFences[i]));
+
+
 		}
 	}
 	// 创建深度资源对象
@@ -2119,13 +2191,13 @@ private:
 				indices.push_back(uniqueVertices[vertex]);
 			}
 		}
-
 	}
 
 	VkSampleCountFlagBits getMaxUsableSampleCount()
 	{
 		VkPhysicalDeviceProperties properties;
 		vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+		//std::cout << "max constant count: " << properties.limits.maxPushConstantsSize << std::endl;
 		VkSampleCountFlags counts = properties.limits.framebufferColorSampleCounts & properties.limits.framebufferDepthSampleCounts;
 		if (counts & VK_SAMPLE_COUNT_64_BIT) return VK_SAMPLE_COUNT_64_BIT;
 		if (counts & VK_SAMPLE_COUNT_32_BIT) return VK_SAMPLE_COUNT_32_BIT;
@@ -2145,6 +2217,32 @@ private:
 			VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT,
 			colorImage, colorImageMemory);
 		colorImageView = createImageView(colorImage, 1, colorFormat, VK_IMAGE_ASPECT_COLOR_BIT);
+	}
+
+
+	void test() {
+		// 指定常量对象变量
+		const bool kUserShaderDebug = false;
+		// 指定特殊值参数
+		const VkSpecializationMapEntry userShaderDebug{
+			.constantID = 0, // 指明 constant_id 值
+			.offset = 0,
+			.size = sizeof(bool)
+		};
+		// 指定特殊值信息
+		const VkSpecializationInfo specializationInfo{
+			.mapEntryCount = 1,
+			.pMapEntries = &userShaderDebug,
+			.dataSize = sizeof(bool),
+			.pData = &kUserShaderDebug
+		};
+		// 在管道着色器阶段的信息结构体中，指明特殊常量参数
+		const VkPipelineShaderStageCreateInfo stageInfo{
+			.pSpecializationInfo = &specializationInfo
+		};
+
+
+		
 	}
 };
 int main()

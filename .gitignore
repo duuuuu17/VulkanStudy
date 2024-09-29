@@ -21,6 +21,7 @@ Release/
 lib/
 OpenGL/
 VulkanStudy/
+VulkanTest/Advance
 x64/
 # 排除目录，需要被上传至github
 !include/
